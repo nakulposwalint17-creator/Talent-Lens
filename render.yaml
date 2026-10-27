@@ -1,0 +1,56 @@
+# Render Blueprint for TalentLens: FastAPI backend + Next.js frontend.
+#
+# The browser calls the backend directly, so the two URLs below must match the
+# public URLs Render assigns. Render uses https://<service-name>.onrender.com
+# unless that name is already taken, in which case it appends a suffix. If that
+# happens, update both values in the dashboard (and rebuild the frontend, since
+# NEXT_PUBLIC_* values are baked in at build time).
+#
+# Storage: the backend keeps its SQLite database in DATA_DIR on the instance's
+# local disk. On Render that disk is ephemeral — it is wiped on every deploy,
+# restart, and free-tier spin-down. See the "disk" block below to persist it.
+
+services:
+  - type: web
+    name: talentlens-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # One worker only: SQLite and the in-process evaluation queue are per-process.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: CORS_ORIGINS
+        value: https://talentlens-web.onrender.com
+      - key: AI_PROVIDER
+        value: demo # set to "anthropic" and fill ANTHROPIC_API_KEY for live AI
+      - key: ANTHROPIC_API_KEY
+        sync: false # prompted in the dashboard; never committed
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-5-5
+      - key: DATA_DIR
+        value: data
+      - key: MAX_UPLOAD_MB
+        value: "10"
+    # To keep data across deploys/restarts, switch to a paid plan (e.g. starter),
+    # uncomment this, and set DATA_DIR above to /var/data.
+    # disk:
+    #   name: talentlens-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+
+  - type: web
+    name: talentlens-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://talentlens-api.onrender.com
