@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -56,9 +57,12 @@ class Settings(BaseSettings):
 
     @property
     def resolved_database_url(self) -> str:
-        if self.database_url:
-            return self.database_url
-        return f"sqlite:///{self.data_dir / 'talentlens.db'}"
+        url = self.database_url.strip()
+        if not url:
+            return f"sqlite:///{self.data_dir / 'talentlens.db'}"
+        # Hosted Postgres providers (Render, Neon, Heroku...) hand out postgres:// or
+        # postgresql:// URLs; point SQLAlchemy at the psycopg 3 driver explicitly.
+        return re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", url)
 
     @property
     def max_upload_bytes(self) -> int:

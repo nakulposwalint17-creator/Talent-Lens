@@ -180,7 +180,7 @@ cp .env.example .env.local
 | `ANTHROPIC_MAX_ATTEMPTS` | `3` | Bounded retries (exponential backoff + jitter, honours `retry-after`) |
 | `ANTHROPIC_SERVER_FALLBACKS` | `true` | Server-side refusal fallbacks (beta) on supported models |
 | `DATA_DIR` | `backend/data` | Where the SQLite database lives |
-| `DATABASE_URL` | — | Override the full SQLAlchemy URL |
+| `DATABASE_URL` | — | Override the database URL; `postgres://…` URLs use Postgres (used in the Render deployment) |
 | `MAX_UPLOAD_MB` | `10` | Per-file limit |
 | `MAX_FILES_PER_REQUEST` | `25` | Per upload request |
 | `MAX_PDF_PAGES` | `30` | Pages read per PDF |

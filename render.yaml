@@ -6,9 +6,11 @@
 # happens, update both values in the dashboard (and rebuild the frontend, since
 # NEXT_PUBLIC_* values are baked in at build time).
 #
-# Storage: the backend keeps its SQLite database in DATA_DIR on the instance's
-# local disk. On Render that disk is ephemeral — it is wiped on every deploy,
-# restart, and free-tier spin-down. See the "disk" block below to persist it.
+# Storage: the backend uses the managed Postgres database declared at the bottom
+# (DATABASE_URL is wired in automatically), so data survives deploys, restarts
+# and free-tier spin-downs. Note: Render's *free* Postgres plan expires 30 days
+# after creation. For long-term persistence either change the database plan to
+# basic-256mb, or replace DATABASE_URL with an external Postgres URL (e.g. Neon).
 
 services:
   - type: web
@@ -17,7 +19,7 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    # One worker only: SQLite and the in-process evaluation queue are per-process.
+    # One worker only: the in-process evaluation queue is per-process.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/health
     envVars:
@@ -31,16 +33,12 @@ services:
         sync: false # prompted in the dashboard; never committed
       - key: ANTHROPIC_MODEL
         value: claude-opus-5-5
-      - key: DATA_DIR
-        value: data
+      - key: DATABASE_URL
+        fromDatabase:
+          name: talentlens-db
+          property: connectionString
       - key: MAX_UPLOAD_MB
         value: "10"
-    # To keep data across deploys/restarts, switch to a paid plan (e.g. starter),
-    # uncomment this, and set DATA_DIR above to /var/data.
-    # disk:
-    #   name: talentlens-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
 
   - type: web
     name: talentlens-web
@@ -54,3 +52,9 @@ services:
         value: "22"
       - key: NEXT_PUBLIC_API_BASE_URL
         value: https://talentlens-api.onrender.com
+
+databases:
+  - name: talentlens-db
+    plan: free
+    databaseName: talentlens
+    user: talentlens

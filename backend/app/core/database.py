@@ -20,10 +20,12 @@ class Database:
     """Owns the engine and session factory so tests can create isolated instances."""
 
     def __init__(self, url: str) -> None:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        self.engine: Engine = create_engine(url, connect_args=connect_args, future=True)
         if url.startswith("sqlite"):
+            self.engine: Engine = create_engine(url, connect_args={"check_same_thread": False}, future=True)
             event.listen(self.engine, "connect", _sqlite_pragmas)
+        else:
+            # Hosted Postgres drops idle connections; check before use and recycle periodically.
+            self.engine = create_engine(url, pool_pre_ping=True, pool_recycle=300, future=True)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
 
     def init_schema(self) -> None:
