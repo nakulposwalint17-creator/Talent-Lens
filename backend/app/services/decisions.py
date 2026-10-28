@@ -27,7 +27,8 @@ class DecisionError(ValueError):
         self.message = message
 
 
-def record_decision(db: Session, candidate: Candidate, payload: DecisionCreate) -> RecruiterReview:
+def record_decision(db: Session, candidate: Candidate, payload: DecisionCreate,
+                    recorded_by: str | None = None) -> RecruiterReview:
     evaluation = current_evaluation(candidate)
     completed = evaluation is not None and evaluation.status == "completed"
     ai_recommendation = evaluation.recommendation if completed and evaluation else None
@@ -58,6 +59,7 @@ def record_decision(db: Session, candidate: Candidate, payload: DecisionCreate) 
         is_override=is_override,
         reason=payload.reason,
         notes=payload.notes,
+        recorded_by=recorded_by,
     )
     candidate.reviews.append(review)
     db.flush()
@@ -66,5 +68,6 @@ def record_decision(db: Session, candidate: Candidate, payload: DecisionCreate) 
         db, candidate.session_id, "recruiter_decision",
         f"Recruiter {verb} for {candidate_label(candidate)}: {payload.decision.replace('_', ' ')}.",
         candidate_id=candidate.id, payload={"decision": payload.decision, "is_override": is_override},
+        actor=recorded_by,
     )
     return review

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from types import SimpleNamespace
 
@@ -93,7 +94,7 @@ def test_successful_structured_response():
     assert call["model"] == "claude-opus-5-5"
     assert call["output_config"]["format"]["type"] == "json_schema"
     assert call["fallbacks"] == "default" and call["betas"] == ["server-side-fallback-2026-07-01"]
-    assert "<resume>" in call["messages"][0]["content"]
+    assert re.search(r"<resume_[0-9a-f]{16}>\n", call["messages"][0]["content"])
     assert sleeps == []
 
 

@@ -17,8 +17,11 @@ def get_session(db: Session, session_id: str) -> ScreeningSession | None:
     return db.scalars(select(ScreeningSession).where(ScreeningSession.id == session_id).options(*_FULL)).first()
 
 
-def list_sessions(db: Session, limit: int | None = None) -> list[ScreeningSession]:
+def list_sessions(db: Session, limit: int | None = None, *, owner_id: str | None = None) -> list[ScreeningSession]:
+    """All sessions, or only those owned by ``owner_id`` when given."""
     stmt = select(ScreeningSession).options(*_FULL).order_by(ScreeningSession.created_at.desc())
+    if owner_id is not None:
+        stmt = stmt.where(ScreeningSession.owner_id == owner_id)
     if limit:
         stmt = stmt.limit(limit)
     return list(db.scalars(stmt).all())

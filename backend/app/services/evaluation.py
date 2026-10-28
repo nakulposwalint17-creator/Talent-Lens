@@ -23,7 +23,9 @@ from app.schemas.requirements import JobRequirements
 from app.schemas.scoring import Recommendation, ScoringConfig
 from app.services.evidence import SourceText, validate_assessment
 from app.services.ingestion import record_event
+from app.services.prompt_safety import find_output_directives
 from app.services.providers.base import AIProvider, AssessmentContext, ProviderError
+from app.services.providers.demo import DemoProvider
 from app.services.resume_analysis import analyze_resume, merged_months
 from app.services.scoring import ScoringError, compute_score
 
@@ -31,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Resumes with less extracted text than this are never ranked numerically.
 MIN_RANKABLE_CHARS = 300
+# A live AI score this many points above the rule-based baseline is flagged for review.
+BASELINE_DIVERGENCE_POINTS = 30.0
 
 
 def _flag(code: str, message: str) -> dict[str, str]:
@@ -72,6 +76,48 @@ def _review_flags(assessment: CandidateAssessment, scoring, evidence_flags: list
             seen.add(key)
             unique.append({"code": f["code"], "message": f["message"]})
     return unique
+
+
+def _assessment_free_text(assessment: CandidateAssessment) -> list[str | None]:
+    """Model-written prose shown to the recruiter. Concerns are excluded: they legitimately
+    describe embedded instructions found in the resume."""
+    texts: list[str | None] = [assessment.summary, *assessment.experience.notes]
+    texts += [t for c in assessment.criteria for t in (c.explanation, c.uncertainty)]
+    texts += [s.note for s in assessment.skills] + [c.note for c in assessment.checks]
+    return texts
+
+
+def _baseline_score(context: AssessmentContext, text: str, page_offsets, config: ScoringConfig,
+                    not_applicable: set[CriterionKey]) -> float | None:
+    """The deterministic rule-based score for the same resume: a reference that no resume text can talk into
+    a higher number. Never allowed to fail the evaluation."""
+    try:
+        baseline = DemoProvider().assess_candidate(context)
+        validated, _, _ = validate_assessment(baseline, text, page_offsets)
+        return compute_score(validated.criteria, config, not_applicable).overall_score
+    except Exception:  # noqa: BLE001
+        logger.warning("Baseline scoring failed", exc_info=True)
+        return None
+
+
+def _output_flags(assessment: CandidateAssessment, overall: float | None, baseline: float | None) -> list[dict[str, str]]:
+    flags = []
+    directives = find_output_directives(_assessment_free_text(assessment))
+    if directives:
+        flags.append(_flag(
+            "ai_output_policy",
+            f"The AI's explanation contains a directive or instruction-like text (“{directives[0][:160]}”), which it "
+            "is told never to write. The resume may have influenced the model; check the assessment against the "
+            "verified evidence.",
+        ))
+    if overall is not None and baseline is not None and overall - baseline >= BASELINE_DIVERGENCE_POINTS:
+        flags.append(_flag(
+            "score_divergence",
+            f"The AI score ({overall:.0f}) is {overall - baseline:.0f} points above the rule-based baseline "
+            f"({baseline:.0f}) for the same resume. Large gaps can be legitimate (skills described in other words) "
+            "but can also indicate manipulation; verify the evidence before relying on the score.",
+        ))
+    return flags
 
 
 def evaluate_candidate(db: Session, candidate: Candidate, session: ScreeningSession, provider: AIProvider,
@@ -138,7 +184,19 @@ def evaluate_candidate(db: Session, candidate: Candidate, session: ScreeningSess
         })
 
     flags = _review_flags(validated, scoring, evidence_flags)
+    baseline = (_baseline_score(context, text, candidate.page_offsets, config, not_applicable)
+                if provider.is_live else None)
+    flags += _output_flags(validated, scoring.overall_score, baseline)
+    # Raised by the application itself, so detection never depends on the model reporting it.
+    if analysis.injection_lines and not any(f["code"] == "embedded_instructions" for f in flags):
+        flags.append(_flag(
+            "embedded_instructions",
+            f"The resume contains {len(analysis.injection_lines)} line(s) that resemble instructions to an automated "
+            "screening system. They were withheld from the AI and ignored; review the original file.",
+        ))
     result = _result_payload(validated, evidence_records, scoring, config, provider, session)
+    if baseline is not None:
+        result["baseline_score"] = baseline
 
     found = (EvidenceStatus.DEMONSTRATED, EvidenceStatus.PARTIAL)
     required = [s for s in validated.skills if s.kind == "required"]

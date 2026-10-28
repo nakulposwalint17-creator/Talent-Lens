@@ -7,11 +7,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.config import MIN_PASSWORD_LENGTH
 from app.schemas.assessment import CriterionKey
 from app.schemas.requirements import ConfirmedJobRequirements, ExtractionNote, JobRequirements
 from app.schemas.scoring import ScoringConfig
 
 Decision = Literal["advance", "hold", "reject", "needs_review"]
+Role = Literal["admin", "recruiter"]
 DuplicateResolution = Literal["unreviewed", "confirmed_duplicate", "not_duplicate"]
 
 
@@ -47,6 +49,61 @@ class ConfigResponse(BaseModel):
     missing_evidence_policy: list[str]
     data_handling: list[str]
     limitations: list[str]
+
+
+# ---------------------------------------------------------------------------- auth & users
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    display_name: str | None
+    role: Role
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class LoginResponse(BaseModel):
+    token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_at: datetime
+    user: UserOut
+
+
+def _check_email(value: str) -> str:
+    value = value.strip().lower()
+    local, _, domain = value.partition("@")
+    if not local or "." not in domain or any(ch.isspace() for ch in value):
+        raise ValueError("Enter a valid email address")
+    return value
+
+
+class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
+    role: Role = "recruiter"
+    display_name: str | None = Field(default=None, max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, value: str) -> str:
+        return _check_email(value)
+
+
+class UserUpdate(BaseModel):
+    role: Role | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=MIN_PASSWORD_LENGTH, max_length=256)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
 
 
 # ---------------------------------------------------------------------------- requirements
@@ -182,6 +239,7 @@ class DecisionOut(BaseModel):
     ai_recommendation: str | None
     ai_score: float | None
     evaluation_id: str | None
+    recorded_by: str | None = None
     created_at: datetime
 
 
@@ -269,6 +327,7 @@ class AuditEventOut(BaseModel):
     event_type: str
     message: str
     payload: dict[str, Any] | None
+    actor: str | None = None
     created_at: datetime
 
 

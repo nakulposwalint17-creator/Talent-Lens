@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.services.providers.base import ProviderError
-from tests.conftest import REQUIREMENTS, RESUME_LINES, make_docx, make_image_only_pdf, make_pdf, upload
+from tests.conftest import REQUIREMENTS, RESUME_LINES, auth, login, make_docx, make_image_only_pdf, make_pdf, upload
 
 OTHER_RESUME = [
     "Robin Sample", "robin@example.com", "", "EXPERIENCE",
@@ -256,6 +256,7 @@ def test_dashboard_metrics_come_from_persisted_data(client, session_id):
 def test_results_and_decisions_survive_restart(settings):
     app = create_app(settings, inline_evaluation=True)
     with TestClient(app) as first:
+        first.headers.update(auth(login(first)))
         sid = first.post("/api/sessions", json={"job_title": "Backend Engineer", "requirements": REQUIREMENTS}).json()["session"]["id"]
         upload(first, sid, ("good.pdf", make_pdf()))
         first.post(f"/api/sessions/{sid}/evaluate", json={})
@@ -265,6 +266,7 @@ def test_results_and_decisions_survive_restart(settings):
 
     restarted = create_app(settings, inline_evaluation=True)
     with TestClient(restarted) as second:
+        second.headers.update(auth(login(second)))
         after = second.get(f"/api/candidates/{cid}").json()
         assert after["evaluation"] == before["evaluation"]
         assert after["result"] == before["result"]
@@ -276,6 +278,7 @@ def test_results_and_decisions_survive_restart(settings):
 def test_interrupted_evaluations_are_recovered_on_startup(settings):
     app = create_app(settings, inline_evaluation=True)
     with TestClient(app) as first:
+        first.headers.update(auth(login(first)))
         sid = first.post("/api/sessions", json={"job_title": "Backend Engineer", "requirements": REQUIREMENTS}).json()["session"]["id"]
         upload(first, sid, ("good.pdf", make_pdf()))
         cid = candidates(first, sid)[0]["id"]
@@ -284,6 +287,7 @@ def test_interrupted_evaluations_are_recovered_on_startup(settings):
             db.get(Candidate, cid).evaluation_status = "running"
             db.commit()
     with TestClient(create_app(settings, inline_evaluation=True)) as second:
+        second.headers.update(auth(login(second)))
         cand = second.get(f"/api/candidates/{cid}").json()
         assert cand["evaluation_status"] == "failed"
         assert cand["evaluation"]["error_code"] == "interrupted"

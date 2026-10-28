@@ -24,10 +24,44 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class User(Base):
+    """A person who can sign in. Recruiters see only their own screenings; admins see all and manage users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    # admin | recruiter
+    role: Mapped[str] = mapped_column(String(20), default="recruiter")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tokens: Mapped[list[AuthToken]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class AuthToken(Base):
+    """A server-side login session. Only the SHA-256 digest of the bearer token is stored."""
+
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="tokens")
+
+
 class ScreeningSession(Base):
     __tablename__ = "screening_sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    # Sessions created before authentication existed have no owner and are visible to admins only.
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     job_title: Mapped[str] = mapped_column(String(200))
     department: Mapped[str | None] = mapped_column(String(120), nullable=True)
     job_description: Mapped[str] = mapped_column(Text, default="")
@@ -137,6 +171,8 @@ class RecruiterReview(Base):
     is_override: Mapped[bool] = mapped_column(Boolean, default=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Email of the signed-in user who recorded the decision (a snapshot, kept if the account is removed).
+    recorded_by: Mapped[str | None] = mapped_column(String(254), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     candidate: Mapped[Candidate] = relationship(back_populates="reviews")
@@ -153,4 +189,6 @@ class AuditEvent(Base):
     event_type: Mapped[str] = mapped_column(String(40))
     message: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Email of the signed-in user who caused the event; None for system events.
+    actor: Mapped[str | None] = mapped_column(String(254), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

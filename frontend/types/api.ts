@@ -171,6 +171,8 @@ export interface DecisionOut {
   ai_recommendation: Recommendation | null;
   ai_score: number | null;
   evaluation_id: string | null;
+  /** Email of the user who recorded the decision. */
+  recorded_by?: string | null;
   created_at: string;
 }
 
@@ -317,6 +319,8 @@ export interface AuditEvent {
   event_type: string;
   message: string;
   payload: Record<string, unknown> | null;
+  /** Email of the user who caused the event; null for system events. */
+  actor?: string | null;
   created_at: string;
 }
 
@@ -332,4 +336,23 @@ export interface DashboardResponse {
   };
   recent_sessions: SessionSummary[];
   provider: ProviderInfo;
+}
+
+export type Role = "admin" | "recruiter";
+
+export interface User {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: Role;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface LoginResponse {
+  token: string;
+  token_type: "bearer";
+  expires_at: string;
+  user: User;
 }

@@ -95,10 +95,32 @@ Prompt: “make the UI/UX more visually professional, appealing, aesthetic, cool
 
 **Verification:** pytest 109 passed; `tsc` clean; ESLint 0 problems; `next build` succeeded; Playwright E2E passed; scripted Chrome walkthrough in both themes — 0 console errors, 0 px mobile overflow, theme switches live, command menu opens a candidate.
 
+## Fourth pass — access control, app security, testing, prompt-injection resilience
+
+Prompt: an external assessment scored the project 6.4/10 (access control & app security 3.0: "no authentication, no rate limiting, public deployment config"; testing 6.0: "no frontend unit tests, one failing E2E test"; LLM resilience 6.0: "bypassable through hidden text and delimiter breakout"). Asked to improve testing, access control and app security, then also LLM and prompt-injection resilience.
+
+**Changes:** accounts (admin/recruiter) with scrypt passwords and server-side bearer sessions stored as digests; per-recruiter object-level authorisation (404 for other users' data) on every session and candidate route; admin user-management API; actor recorded on audit events and decisions; additive startup migrations for existing databases; sign-in page, auth gate and authenticated CSV download in the frontend. Rate limits per IP, per user (expensive operations) and per account (lockout), with a trusted-proxy-hops setting. Security headers and CSP on both apps, request body caps, production mode (no docs, HSTS, refuses wildcard CORS and weak bootstrap passwords), and a Render blueprint that prompts for admin credentials. Prompt-injection layers: hidden PDF/DOCX text removal (render-based visibility check), Unicode tag/zero-width/bidi stripping, instruction-line redaction before live calls, random per-request delimiters, an application-raised injection flag, an output scan for hiring directives, and a rule-based baseline divergence check. Tests: backend 109 → 190 with branch coverage enforced (≥ 90% combined), 74 new frontend unit/component tests (Vitest), and a second E2E test for the access-control flow.
+
+**Problems actually observed in this pass and fixed**
+
+1. **The "failing E2E test" was environmental.** Next 16 locks each build directory, and the user's own `next dev` already held `.next/`. The E2E server now uses `NEXT_DIST_DIR=.next-e2e`.
+2. **413 came back as 400.** Raising from the wrapped `receive` inside FastAPI's body parsing is caught and reported as a generic 400. The middleware now sends the 413 itself, presents the rest of the request as a disconnect, and drops the app's later response.
+3. **The route-protection test silently checked nothing.** In FastAPI 0.162, routers are mounted lazily, so `app.routes` had no API routes. The `checked >= 20` guard caught it; the test now enumerates the OpenAPI schema.
+4. **Changing your own password signed you out too**, contradicting the endpoint's description. It now keeps the current session and revokes the others.
+5. **White text with tight line spacing was missed.** Its bounding box overlapped the neighbouring black glyphs, so the area showed contrast. The check now samples the vertical middle of each span. Rendering each page once and checking every span also catches text covered by a white shape.
+6. **Forgeable client IPs.** uvicorn's `--forwarded-allow-ips='*'` would trust the client-controlled leftmost `X-Forwarded-For` entry and let attackers dodge per-IP limits. This was replaced with `TRUSTED_PROXY_HOPS`, which reads only the entry appended by the trusted proxy, and a test.
+7. **npm peer conflict:** Vitest 5 needs `@types/node` ≥ 22; it was bumped from `^20` (Render already deploys Node 22).
+8. **ResourceWarnings** from undisposed SQLite engines in the migration test.
+9. **Lint caught test helpers mutating outer variables during render** (React Compiler `react-hooks/globals`). They were rewritten as components with buttons the test clicks.
+
+**Verification for this pass:** pytest 190 passed (191 after the demo-login check was added) (95.4% line / 86.4% branch coverage, 0 warnings); Vitest 74 passed; `tsc` clean; ESLint 0 problems; `npm audit` 0 vulnerabilities; `next build` succeeded; Playwright E2E 2 passed (access-control flow and the full workflow with zero console errors). Run while the user's own dev server was still up on :3000.
+
 ## Not verified / remaining limitations
 
 - **Live Anthropic mode was not called against the real API** (no key available). It is covered only by mocked-client tests. Prompts and schema handling may need adjustment on first real use.
 - The near-duplicate threshold, scoring weights and bands are untested against real hiring data.
 - Demo evaluation is heuristic (see README “Limitations”).
-- The duplicate lock is per process; multiple backend workers would need a database-level guard.
+- The duplicate lock and the rate limiter are per process; multiple backend workers would need a database-level guard and a shared store (e.g. Redis).
+- Authentication and access control are tested in-process and in the browser, but the application has had no external security review or penetration test.
+- Prompt-injection defences are layered heuristics. Pattern-based redaction can miss novel phrasing, and hidden-text detection doesn't cover text behind images or DOCX style inheritance. The output checks exist because no single layer is complete.
 - Accessibility was checked through semantics, keyboard paths exercised in Playwright and visual review — not with a screen reader or a formal audit.

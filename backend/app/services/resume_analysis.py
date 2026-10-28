@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.services.prompt_safety import INJECTION_RE
+
 SECTION_ALIASES: dict[str, list[str]] = {
     "experience": [
         "experience", "work experience", "professional experience", "employment", "employment history",
@@ -58,18 +60,8 @@ _RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_INJECTION_PATTERNS = [
-    r"ignore\s+(?:all\s+|any\s+)?(?:of\s+)?(?:the\s+)?(?:previous|prior|above|earlier|preceding)\s+(?:instructions|prompts?|directions|rules)",
-    r"disregard\s+(?:all\s+|any\s+|the\s+)?(?:previous\s+|prior\s+|above\s+)?(?:instructions|rules|criteria|guidelines)",
-    r"(?:you\s+are|act\s+as)\s+(?:now\s+)?(?:an?\s+)?(?:ai|assistant|language\s+model|llm|chatgpt|claude|gpt)",
-    r"(?:rank|rate|score|mark|classify|evaluate)\s+(?:this|the|me|my)\s+(?:candidate|applicant|resume|profile|application)?\s*(?:as|at|with)\s+(?:a\s+)?(?:the\s+)?(?:top|perfect|strong|best|highest|100|maximum)",
-    r"(?:system|developer)\s+(?:prompt|message|instructions?)",
-    r"new\s+instructions\s*:",
-    r"\b100\s*/\s*100\b|score\s+of\s+100\b",
-    r"(?:hire|shortlist|advance)\s+this\s+(?:candidate|applicant)\s+immediately",
-    r"<\|?(?:im_start|system|endoftext)\|?>",
-]
-_INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE)
+# Shared with the live provider's input redaction so both paths flag the same text.
+_INJECTION_RE = INJECTION_RE
 
 _BULLET_RE = re.compile(r"^[\s•●▪◦·*\-–—]+")
 _NAME_TOKEN = re.compile(r"^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’\-.]*$")

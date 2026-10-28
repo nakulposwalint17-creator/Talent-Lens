@@ -1,17 +1,47 @@
 import path from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
+
+import { E2E_ADMIN } from "./credentials";
 
 const SAMPLES = path.resolve(__dirname, "../../samples");
 const resume = (name: string) => path.join(SAMPLES, "resumes", name);
 const edge = (name: string) => path.join(SAMPLES, "edge-cases", name);
 
+async function signIn(page: Page, password = E2E_ADMIN.password) {
+  await page.getByLabel("Email").fill(E2E_ADMIN.email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+test("access control: sign-in required, bad password rejected, deep links preserved, sign-out", async ({ page }) => {
+  await page.goto("/history");
+  await page.waitForURL(/\/login\?next=%2Fhistory/);
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
+  await signIn(page, "definitely-wrong-password");
+  await expect(page.getByText("The email or password is incorrect.")).toBeVisible();
+  await expect(page.getByLabel("Password")).toHaveValue("");
+
+  await signIn(page);
+  await page.waitForURL(/\/history$/);
+  await expect(page.getByTestId("account")).toContainText("Administrator");
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.waitForURL(/\/login$/);
+  await page.goto("/");
+  await page.waitForURL(/\/login$/);
+});
+
+
 test("core screening workflow: criteria → upload → shortlist → evidence → override → persistence → export", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
 
-  // Overview with demo mode label
+  // Sign in, then the overview with the demo mode label
   await page.goto("/");
+  await page.waitForURL(/\/login/);
+  await signIn(page);
   await expect(page.getByTestId("mode-label").first()).toHaveText(/Demo mode/i);
 
   // Job setup: extract, review, confirm

@@ -14,6 +14,9 @@ from app.main import create_app
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 
+ADMIN_EMAIL = "admin@example.com"
+ADMIN_PASSWORD = "correct-horse-battery-staple"
+
 REQUIREMENTS = {
     "required_skills": ["Python", "FastAPI", "PostgreSQL", "Docker", "CI/CD"],
     "preferred_skills": ["Kubernetes", "AWS", "Terraform", "Redis"],
@@ -81,20 +84,52 @@ def make_docx(lines: list[str] | None = None) -> bytes:
 @pytest.fixture(autouse=True)
 def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     # Tests never use a real API key or the developer's local configuration.
-    for name in ("ANTHROPIC_API_KEY", "AI_PROVIDER", "DATABASE_URL", "DATA_DIR", "ANTHROPIC_MODEL"):
+    for name in ("ANTHROPIC_API_KEY", "AI_PROVIDER", "DATABASE_URL", "DATA_DIR", "ANTHROPIC_MODEL",
+                 "ADMIN_EMAIL", "ADMIN_PASSWORD", "ENVIRONMENT", "CORS_ORIGINS", "RATE_LIMIT_ENABLED"):
         monkeypatch.delenv(name, raising=False)
+
+
+def make_settings(tmp_path: Path, **overrides) -> Settings:
+    values = {"DATA_DIR": str(tmp_path), "AI_PROVIDER": "demo", "MAX_UPLOAD_MB": 1,
+              "ADMIN_EMAIL": ADMIN_EMAIL, "ADMIN_PASSWORD": ADMIN_PASSWORD, **overrides}
+    return Settings(**values, _env_file=None)
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(DATA_DIR=str(tmp_path), AI_PROVIDER="demo", MAX_UPLOAD_MB=1, _env_file=None)
+    return make_settings(tmp_path)
+
+
+def login(client: TestClient, email: str = ADMIN_EMAIL, password: str = ADMIN_PASSWORD) -> str:
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
+def auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
-def client(settings: Settings) -> Iterator[TestClient]:
+def anon_client(settings: Settings) -> Iterator[TestClient]:
+    """A client with no credentials."""
     app = create_app(settings, inline_evaluation=True)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client(anon_client: TestClient) -> TestClient:
+    """A client signed in as the bootstrap administrator."""
+    anon_client.headers.update(auth(login(anon_client)))
+    return anon_client
+
+
+def add_user(client: TestClient, email: str, password: str = "recruiter-password-1", role: str = "recruiter") -> str:
+    """Create an account through the admin API and return a token for it."""
+    created = client.post("/api/users", json={"email": email, "password": password, "role": role})
+    assert created.status_code == 201, created.text
+    return login(client, email, password)
 
 
 @pytest.fixture

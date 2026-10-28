@@ -21,6 +21,7 @@ from app.schemas.assessment import CRITERION_LABELS, CriterionKey
 from app.schemas.requirements import JobRequirements
 from app.schemas.scoring import ScoringConfig
 from app.services.duplicates import DUPLICATE_METHODS, is_excluded_from_ranking
+from app.services.resume_parser import HIDDEN_TEXT_WARNING, TAG_CHARS_WARNING
 
 FINAL_DECISIONS = {"advance", "hold", "reject"}
 
@@ -72,6 +73,9 @@ def review_flags(candidate: Candidate, session: ScreeningSession, labels: dict[s
     elif candidate.parse_status in ("failed", "empty"):
         flags.append(ReviewFlag(code="processing_failed",
                                 message=candidate.parse_error_message or "The file could not be processed."))
+    for warning in candidate.parse_warnings or []:
+        if warning.startswith((HIDDEN_TEXT_WARNING, TAG_CHARS_WARNING)):
+            flags.append(ReviewFlag(code="hidden_text", message=warning))
     if candidate.duplicate_status == "near_duplicate" and candidate.duplicate_resolution == "unreviewed":
         other = labels.get(candidate.duplicate_of_id or "", "another upload")
         similarity = f" ({candidate.duplicate_similarity:.0%} similar)" if candidate.duplicate_similarity else ""
@@ -120,7 +124,7 @@ def decision_out(review: RecruiterReview) -> DecisionOut:
         id=review.id, decision=review.decision,  # type: ignore[arg-type]
         is_override=review.is_override, reason=review.reason, notes=review.notes,
         ai_recommendation=review.ai_recommendation, ai_score=review.ai_score,
-        evaluation_id=review.evaluation_id, created_at=review.created_at,
+        evaluation_id=review.evaluation_id, recorded_by=review.recorded_by, created_at=review.created_at,
     )
 
 

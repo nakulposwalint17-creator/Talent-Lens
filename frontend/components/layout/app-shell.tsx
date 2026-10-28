@@ -1,11 +1,12 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { BookOpenText, History, LayoutGrid, Menu, ScanSearch, Search, X } from "lucide-react";
+import { BookOpenText, History, LayoutGrid, LogOut, Menu, ScanSearch, Search, X } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { LOGIN_PATH, useAuth } from "@/components/layout/auth";
 import { useBackendStatus } from "@/components/layout/backend-status";
 import { BrandMark } from "@/components/layout/brand";
 import { useCommandMenu } from "@/components/layout/command-menu";
@@ -75,11 +76,42 @@ function CurrentScreening({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+function Account() {
+  const { user, signOut } = useAuth();
+  const router = useRouter();
+  if (!user) return null;
+  return (
+    <div className="mb-2 flex items-center gap-2 rounded-md px-2.5 py-1.5" data-testid="account">
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-ink">{user.display_name || user.email}</span>
+        <span className="block truncate text-xs text-muted">
+          {user.role === "admin" ? "Administrator" : "Recruiter"}
+          {user.display_name ? ` · ${user.email}` : ""}
+        </span>
+      </span>
+      <Tooltip side="right" content="Sign out">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Sign out"
+          onClick={async () => {
+            await signOut();
+            router.replace(LOGIN_PATH);
+          }}
+        >
+          <LogOut />
+        </Button>
+      </Tooltip>
+    </div>
+  );
+}
+
 function SidebarFooter() {
   const { health, status, recheck } = useBackendStatus();
   const live = health?.provider.mode === "live";
   return (
     <div className="space-y-1.5 border-t border-line pt-3">
+      <Account />
       <ThemeSwitch className="mb-2" />
       <Tooltip
         side="right"
@@ -159,6 +191,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  // The sign-in page is shown without navigation.
+  if (pathname === LOGIN_PATH) return <main id="main">{children}</main>;
   return (
     <div className="relative min-h-dvh lg:pl-[232px]">
       <div aria-hidden className="ambient pointer-events-none absolute inset-x-0 top-0 h-[560px] lg:left-[232px]" />

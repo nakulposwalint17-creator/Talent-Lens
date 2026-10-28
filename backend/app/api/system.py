@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_provider_info, get_settings_dep
+from app.api.deps import get_current_user, get_db, get_provider_info, get_settings_dep
 from app.core.config import APP_VERSION, Settings
+from app.models import User
 from app.repositories.sessions import list_sessions
 from app.schemas.api import ConfigResponse, DashboardMetrics, DashboardResponse, HealthResponse, ProviderInfo
 from app.schemas.assessment import CRITERION_LABELS
@@ -43,7 +44,11 @@ DATA_HANDLING = [
     "In live AI mode, the extracted resume text and the confirmed job criteria are sent to the Anthropic API for "
     "evaluation. API keys are read from environment variables and are never logged or returned by the API.",
     "Deleting a screening session permanently removes its candidates, evaluations, decisions and audit events.",
-    "There is no authentication or encryption at rest; run the application locally or behind your own access controls.",
+    "Every endpoint except the health check requires a signed-in account. Recruiters see only the screenings they "
+    "created; administrators can see all screenings and manage accounts. Passwords are stored as salted scrypt "
+    "hashes, and session tokens are stored only as SHA-256 digests.",
+    "Sign-in attempts, uploads, criteria extraction and evaluation runs are rate limited.",
+    "Data is not encrypted at rest by the application; use an encrypted disk or managed database for that.",
 ]
 
 LIMITATIONS = [
@@ -74,7 +79,8 @@ def health(request: Request, db: Session = Depends(get_db),
     )
 
 
-@router.get("/config", response_model=ConfigResponse, summary="Scoring methodology, limits and provider")
+@router.get("/config", response_model=ConfigResponse, summary="Scoring methodology, limits and provider",
+            dependencies=[Depends(get_current_user)])
 def config(settings: Settings = Depends(get_settings_dep),
            provider: ProviderInfo = Depends(get_provider_info)) -> ConfigResponse:
     return ConfigResponse(
@@ -105,8 +111,9 @@ def config(settings: Settings = Depends(get_settings_dep),
 
 
 @router.get("/dashboard", response_model=DashboardResponse, summary="Overview metrics from persisted data")
-def dashboard(db: Session = Depends(get_db), provider: ProviderInfo = Depends(get_provider_info)) -> DashboardResponse:
-    sessions = list_sessions(db)
+def dashboard(db: Session = Depends(get_db), provider: ProviderInfo = Depends(get_provider_info),
+              user: User = Depends(get_current_user)) -> DashboardResponse:
+    sessions = list_sessions(db, owner_id=None if user.role == "admin" else user.id)
     metrics = DashboardMetrics(sessions=len(sessions), resumes_processed=0, unique_candidates=0, evaluated=0,
                                requiring_review=0, processing_failures=0, decisions_recorded=0)
     summaries = []

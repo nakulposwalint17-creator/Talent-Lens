@@ -25,9 +25,10 @@ def record_event(
     *,
     candidate_id: str | None = None,
     payload: dict | None = None,
+    actor: str | None = None,
 ) -> None:
     db.add(AuditEvent(session_id=session_id, candidate_id=candidate_id, event_type=event_type,
-                      message=message, payload=payload))
+                      message=message, payload=payload, actor=actor))
 
 
 _locks_guard = threading.Lock()
@@ -47,7 +48,8 @@ def parse_upload(filename: str | None, data: bytes, settings: Settings) -> tuple
     return name, parse_resume(name, data, max_bytes=settings.max_upload_bytes, max_pdf_pages=settings.max_pdf_pages)
 
 
-def store_candidate(db: Session, session: ScreeningSession, name: str, parsed: ParseResult, settings: Settings) -> Candidate:
+def store_candidate(db: Session, session: ScreeningSession, name: str, parsed: ParseResult, settings: Settings,
+                    actor: str | None = None) -> Candidate:
     """Persist a parsed upload with duplicate metadata. Call while holding ``session_lock``."""
     candidate = Candidate(
         session_id=session.id,
@@ -87,7 +89,7 @@ def store_candidate(db: Session, session: ScreeningSession, name: str, parsed: P
     status_text = "parsed" if parsed.ok else f"{parsed.status} ({parsed.error_code})"
     record_event(
         db, session.id, "resume_uploaded", f"Uploaded {name}: {status_text}.", candidate_id=candidate.id,
-        payload={"parse_status": parsed.status, "duplicate_status": candidate.duplicate_status},
+        payload={"parse_status": parsed.status, "duplicate_status": candidate.duplicate_status}, actor=actor,
     )
     if not parsed.ok:
         logger.info("Upload %s could not be parsed: %s", candidate.id, parsed.error_code)

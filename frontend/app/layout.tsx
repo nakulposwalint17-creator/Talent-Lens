@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { AuthGate, AuthProvider } from "@/components/layout/auth";
 import { BackendStatusProvider } from "@/components/layout/backend-status";
 import { CommandMenuProvider } from "@/components/layout/command-menu";
 import { ActiveScreeningProvider } from "@/components/layout/screening-context";
@@ -35,13 +36,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <TooltipProvider delayDuration={150}>
-          <BackendStatusProvider>
-            <ActiveScreeningProvider>
-              <CommandMenuProvider>
-                <AppShell>{children}</AppShell>
-              </CommandMenuProvider>
-            </ActiveScreeningProvider>
-          </BackendStatusProvider>
+          <AuthProvider>
+            <AuthGate>
+              <BackendStatusProvider>
+                <ActiveScreeningProvider>
+                  <CommandMenuProvider>
+                    <AppShell>{children}</AppShell>
+                  </CommandMenuProvider>
+                </ActiveScreeningProvider>
+              </BackendStatusProvider>
+            </AuthGate>
+          </AuthProvider>
         </TooltipProvider>
         <ThemedToaster />
       </body>

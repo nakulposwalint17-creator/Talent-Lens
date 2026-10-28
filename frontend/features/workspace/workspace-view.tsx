@@ -46,7 +46,7 @@ import { QuickDecisionDialog } from "@/features/shortlist/quick-decision-dialog"
 import { Shortlist } from "@/features/shortlist/shortlist";
 import { UploadPanel } from "@/features/upload/upload-panel";
 import { useApi } from "@/hooks/use-api";
-import { api, errorMessage } from "@/lib/api";
+import { api, downloadExport, errorMessage, type ExportFilter } from "@/lib/api";
 import { formatDate, formatRelative, formatYears } from "@/lib/format";
 import type { CandidateSummary, SessionDetail, SessionWorkspace } from "@/types/api";
 
@@ -178,6 +178,14 @@ export function WorkspaceView() {
     }
   };
 
+  const exportCsv = async (filter: ExportFilter) => {
+    try {
+      await downloadExport(sessionId, filter);
+    } catch (error) {
+      toast.error("Couldn't export the CSV", { description: errorMessage(error) });
+    }
+  };
+
   const deleteSession = async () => {
     setDeleting(true);
     try {
@@ -273,9 +281,9 @@ export function WorkspaceView() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuLabel>Download CSV</DropdownMenuLabel>
-                  <DropdownMenuItem asChild><a href={api.exportUrl(sessionId, "all")} download>All resumes ({c.total})</a></DropdownMenuItem>
-                  <DropdownMenuItem asChild><a href={api.exportUrl(sessionId, "ranked")} download>Ranked shortlist ({c.ranked})</a></DropdownMenuItem>
-                  <DropdownMenuItem asChild><a href={api.exportUrl(sessionId, "advanced")} download>Advanced candidates only</a></DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCsv("all")}>All resumes ({c.total})</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCsv("ranked")}>Ranked shortlist ({c.ranked})</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void exportCsv("advanced")}>Advanced candidates only</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

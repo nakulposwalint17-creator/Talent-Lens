@@ -11,6 +11,11 @@ if [ ! -x "$ROOT/backend/.venv/bin/uvicorn" ] || [ ! -d "$ROOT/frontend/node_mod
   exit 1
 fi
 
+if ! grep -Eq '^ADMIN_(EMAIL|PASSWORD)=.+' "$ROOT/backend/.env" 2>/dev/null; then
+  echo "Note: no ADMIN_EMAIL/ADMIN_PASSWORD in backend/.env. Re-run ./scripts/setup.sh to create a local" >&2
+  echo "administrator, or sign in with an account created earlier." >&2
+fi
+
 cleanup() {
   trap - INT TERM EXIT
   echo; echo "Stopping TalentLens…"

@@ -8,10 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import candidates, sessions, system
+from app.api import auth, candidates, sessions, system
 from app.api.errors import install_error_handlers
 from app.core.config import APP_VERSION, Settings, get_settings
 from app.core.database import Database
+from app.core.middleware import install_middleware
+from app.core.rate_limit import RateLimiter
+from app.services.auth import ensure_bootstrap_admin
 from app.services.evaluation import EvaluationRunner, recover_interrupted
 from app.services.providers.factory import build_provider
 
@@ -39,6 +42,7 @@ def create_app(settings: Settings | None = None, *, inline_evaluation: bool = Fa
         app.state.runner = EvaluationRunner(database, lambda: app.state.provider_selection.provider,
                                             inline=inline_evaluation)
         with database.session() as db:
+            ensure_bootstrap_admin(db, settings)
             recovered = recover_interrupted(db)
         if recovered:
             logger.warning("Marked %d interrupted evaluation(s) as failed; they can be retried.", recovered)
@@ -59,17 +63,26 @@ def create_app(settings: Settings | None = None, *, inline_evaluation: bool = Fa
             "assessment."
         ),
         lifespan=lifespan,
+        docs_url="/docs" if settings.api_docs_enabled else None,
+        redoc_url="/redoc" if settings.api_docs_enabled else None,
+        openapi_url="/openapi.json" if settings.api_docs_enabled else None,
     )
+    app.state.limiter = RateLimiter()
+    install_middleware(app, settings, app.state.limiter)
+    # Added last so it is outermost: error responses from the middleware above still carry CORS headers.
+    # Tokens travel in the Authorization header (not cookies), so credentials stay disabled.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type"],
-        expose_headers=["Content-Disposition"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Authorization"],
+        expose_headers=["Content-Disposition", "Retry-After"],
     )
     install_error_handlers(app)
     app.include_router(system.router)
+    app.include_router(auth.router)
+    app.include_router(auth.users_router)
     app.include_router(sessions.router)
     app.include_router(candidates.router)
     return app

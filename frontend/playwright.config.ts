@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { defineConfig } from "@playwright/test";
 
+import { E2E_ADMIN } from "./e2e/credentials";
+
 // The E2E run starts its own backend (port 8100, throwaway database) and
 // frontend (port 3100), so it never touches your local data.
 const DATA_DIR = path.resolve(__dirname, "e2e/.artifacts", `data-${Date.now()}`);
@@ -28,14 +30,21 @@ export default defineConfig({
     {
       command: "../backend/.venv/bin/uvicorn app.main:app --app-dir ../backend --host 127.0.0.1 --port 8100",
       url: `${BACKEND}/api/health`,
-      env: { DATA_DIR, AI_PROVIDER: "demo", CORS_ORIGINS: FRONTEND },
+      env: {
+        DATA_DIR,
+        AI_PROVIDER: "demo",
+        CORS_ORIGINS: FRONTEND,
+        ADMIN_EMAIL: E2E_ADMIN.email,
+        ADMIN_PASSWORD: E2E_ADMIN.password,
+      },
       reuseExistingServer: false,
       timeout: 60_000,
     },
     {
       command: "npx next dev --port 3100",
       url: FRONTEND,
-      env: { NEXT_PUBLIC_API_BASE_URL: BACKEND },
+      // Own build directory, so this works while `npm run dev` is also running.
+      env: { NEXT_PUBLIC_API_BASE_URL: BACKEND, NEXT_DIST_DIR: ".next-e2e" },
       reuseExistingServer: false,
       timeout: 120_000,
     },

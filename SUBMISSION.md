@@ -6,14 +6,15 @@ How each submission requirement is met, and where to look.
 |---|---|---|
 | 1 | Git repository | This repository |
 | 2 | README covering setup, how scoring works, what's done, what's missing, known bugs | [`README.md`](README.md) — sections *Quick start / Installation / Starting the application*, *Scoring: formula, weights, thresholds*, *Missing-evidence policy*, *Implemented features*, *Missing features*, *Known bugs*, *Limitations and assumptions* |
-| 3 | Tests covering scoring, duplicate detection and unreadable files | `backend/tests/` — 109 passing tests (details below), plus a browser end-to-end test |
+| 3 | Tests covering scoring, duplicate detection and unreadable files | `backend/tests/` — 191 passing tests (95.4% line / 86.4% branch coverage), `frontend/**/*.test.ts(x)` — 74 unit/component tests, plus 2 browser end-to-end tests (details below) |
 
 ## Running the tests
 
 ```bash
 ./scripts/setup.sh                    # once
-cd backend && .venv/bin/python -m pytest
-# or everything (tests, type check, lint, build, end-to-end):
+cd backend && .venv/bin/python -m pytest --cov
+cd frontend && npm test
+# or everything (tests + coverage, type check, lint, audit, build, end-to-end):
 ./scripts/verify.sh --e2e
 ```
 
@@ -43,6 +44,18 @@ No API key is needed; all fixtures are generated inside the tests.
 - `test_api.py::test_mixed_batch_upload_isolates_failures` — one batch with valid, corrupt, scanned, encrypted, unsupported and empty files; each gets its own status and the valid ones are unaffected
 - `test_api.py::test_evaluation_ranking_and_failed_files_never_scored` — unreadable files are never ranked or given a zero score
 
+## Security tests
+
+**Authentication** — `backend/tests/test_auth.py`: scrypt hashing, sign-in/out, identical errors for wrong password and unknown email, tokens stored only as digests, expired/invalid/malformed tokens, deactivation and password resets revoking sessions, bootstrap admin created once and never overwritten, legacy-database migration.
+
+**Access control** — `backend/tests/test_access_control.py`: every route in the OpenAPI schema returns 401 without credentials; a recruiter gets 404 on all 11 session/candidate operations for another recruiter's data; listings and dashboard are scoped per user; admin-only user management; the last administrator can't be removed; the audit trail records the actor.
+
+**HTTP hardening and rate limits** — `backend/tests/test_security.py`: security headers on success and error responses; production mode (no docs, HSTS, wildcard CORS and the public demo password refused); body-size caps including streamed bodies; per-IP, per-user and sign-in limits with `Retry-After`; account lockout; forged `X-Forwarded-For` can't evade limits; CORS on 429 responses.
+
+**Prompt injection** — `backend/tests/test_prompt_safety.py`: delimiter breakout (`</resume>`), random fence ids, instruction-line redaction, Unicode tag smuggling, white/covered/microscopic/transparent/invisible PDF text, hidden/white/tiny DOCX runs (while keeping white text on dark banners and shaded cells), application-raised flags when the model stays silent, hiring directives in model output, and the rule-based baseline divergence check.
+
+**Frontend** — Vitest tests for the API client (bearer header, sign-out on 401, authenticated CSV download, uploads), token storage, open-redirect protection, the auth gate and the sign-in page; Playwright `access control` test in a real browser.
+
 ## Running the application
 
 ```bash
@@ -50,4 +63,4 @@ No API key is needed; all fixtures are generated inside the tests.
 ./scripts/dev.sh      # http://localhost:3000 (API docs: http://localhost:8000/docs)
 ```
 
-Demo mode works without any API key. Synthetic sample resumes and edge-case files are in `samples/`.
+Sign in with the demo login: **`admin@talentlens.local`** / **`5zAFCJZhXDi4Suo1hp-n8K8b`** (created by `setup.sh`; for local use only, since production refuses this password). Demo mode works without any API key. Synthetic sample resumes and edge-case files are in `samples/`.

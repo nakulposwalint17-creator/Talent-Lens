@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 
 class Base(DeclarativeBase):
     pass
+
+
+# (table, column, SQL type) added after the first release. Static strings only.
+_ADDED_COLUMNS = [
+    ("screening_sessions", "owner_id", "VARCHAR(32)"),
+    ("recruiter_reviews", "recorded_by", "VARCHAR(254)"),
+    ("audit_events", "actor", "VARCHAR(254)"),
+]
 
 
 class Database:
@@ -33,6 +41,16 @@ class Database:
         from app import models  # noqa: F401
 
         Base.metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Additive migrations for databases created by earlier versions (create_all never alters tables)."""
+        existing = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table, column, ddl in _ADDED_COLUMNS:
+                if existing.has_table(table) and column not in {c["name"] for c in existing.get_columns(table)}:
+                    logger.info("Migrating: adding %s.%s", table, column)
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
     def session(self) -> Session:
         return self.session_factory()

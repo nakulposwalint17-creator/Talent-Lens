@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, statu
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_provider, get_runner, get_settings_dep
+from app.api.deps import can_access, get_current_user, get_db, get_provider, get_runner, get_settings_dep, limit_expensive
 from app.api.errors import AppError, not_found
 from app.core.config import Settings
-from app.models import ScreeningSession
+from app.models import ScreeningSession, User
 from app.repositories.sessions import get_session, list_events, list_sessions
 from app.schemas.api import (
     AuditEventOut,
@@ -39,12 +39,13 @@ from app.services.presenters import current_evaluation, is_stale, session_detail
 from app.services.providers.base import AIProvider, ProviderError
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["sessions"])
+router = APIRouter(prefix="/api", tags=["sessions"], dependencies=[Depends(get_current_user)])
 
 
-def _load(db: Session, session_id: str) -> ScreeningSession:
+def _load(db: Session, session_id: str, user: User) -> ScreeningSession:
     session = get_session(db, session_id)
-    if session is None:
+    # Another user's session is reported as missing so its existence isn't revealed.
+    if session is None or not can_access(user, session):
         raise not_found("Screening session")
     return session
 
@@ -62,7 +63,8 @@ def _workspace(session: ScreeningSession) -> SessionWorkspace:
     return SessionWorkspace(session=detail, candidates=candidates)
 
 
-@router.post("/requirements/extract", response_model=ExtractResponse, summary="Propose structured criteria from a job description")
+@router.post("/requirements/extract", response_model=ExtractResponse, summary="Propose structured criteria from a job description",
+             dependencies=[Depends(limit_expensive)])
 def extract_requirements(payload: ExtractRequest, provider: AIProvider = Depends(get_provider)) -> ExtractResponse:
     try:
         result = provider.extract_requirements(payload.job_title, payload.job_description)
@@ -74,9 +76,11 @@ def extract_requirements(payload: ExtractRequest, provider: AIProvider = Depends
 
 @router.post("/sessions", response_model=SessionWorkspace, status_code=status.HTTP_201_CREATED,
              summary="Create a screening session with confirmed criteria")
-def create_session(payload: SessionCreate, db: Session = Depends(get_db)) -> SessionWorkspace:
+def create_session(payload: SessionCreate, db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)) -> SessionWorkspace:
     config = _scoring_config(payload.scoring_weights)
     session = ScreeningSession(
+        owner_id=user.id,
         job_title=payload.job_title,
         department=payload.department,
         job_description=payload.job_description,
@@ -89,25 +93,28 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)) -> Ses
     db.add(session)
     db.flush()
     record_event(db, session.id, "session_created", f"Screening session created for {session.job_title}.",
-                 payload={"requirements_source": payload.requirements_source})
+                 payload={"requirements_source": payload.requirements_source}, actor=user.email)
     db.commit()
-    return _workspace(_load(db, session.id))
+    return _workspace(_load(db, session.id, user))
 
 
 @router.get("/sessions", response_model=list[SessionSummary], summary="List screening sessions")
-def get_sessions(db: Session = Depends(get_db)) -> list[SessionSummary]:
-    return [session_views(s)[0] for s in list_sessions(db)]
+def get_sessions(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[SessionSummary]:
+    owner = None if user.role == "admin" else user.id
+    return [session_views(s)[0] for s in list_sessions(db, owner_id=owner)]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionWorkspace, summary="Session details with candidates")
-def get_workspace(session_id: str, db: Session = Depends(get_db)) -> SessionWorkspace:
-    return _workspace(_load(db, session_id))
+def get_workspace(session_id: str, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)) -> SessionWorkspace:
+    return _workspace(_load(db, session_id, user))
 
 
 @router.put("/sessions/{session_id}/requirements", response_model=SessionWorkspace,
             summary="Update confirmed criteria (existing evaluations are kept and marked stale)")
-def update_requirements(session_id: str, payload: RequirementsUpdate, db: Session = Depends(get_db)) -> SessionWorkspace:
-    session = _load(db, session_id)
+def update_requirements(session_id: str, payload: RequirementsUpdate, db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)) -> SessionWorkspace:
+    session = _load(db, session_id, user)
     if any(c.evaluation_status in ("queued", "running") for c in session.candidates):
         raise AppError(409, "evaluation_in_progress", "Wait for the current evaluation run to finish before editing criteria.")
     new_requirements = payload.requirements.model_dump()
@@ -128,16 +135,18 @@ def update_requirements(session_id: str, payload: RequirementsUpdate, db: Sessio
         session.requirements_version += 1
         session.requirements_source = "manual"
         record_event(db, session.id, "criteria_updated",
-                     f"Criteria updated to version {session.requirements_version}. Existing evaluations were kept.")
+                     f"Criteria updated to version {session.requirements_version}. Existing evaluations were kept.",
+                     actor=user.email)
     session.updated_at = datetime.now(UTC)
     db.commit()
-    return _workspace(_load(db, session_id))
+    return _workspace(_load(db, session_id, user))
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT,
                summary="Permanently delete a session and all its candidate data")
-def delete_session(session_id: str, db: Session = Depends(get_db)) -> Response:
-    session = _load(db, session_id)
+def delete_session(session_id: str, db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)) -> Response:
+    session = _load(db, session_id, user)
     if any(c.evaluation_status in ("queued", "running") for c in session.candidates):
         raise AppError(409, "evaluation_in_progress", "Wait for the current evaluation run to finish before deleting.")
     db.delete(session)
@@ -146,14 +155,16 @@ def delete_session(session_id: str, db: Session = Depends(get_db)) -> Response:
 
 
 @router.post("/sessions/{session_id}/resumes", response_model=UploadResponse, status_code=status.HTTP_201_CREATED,
-             summary="Upload one or more PDF/DOCX resumes (each file is processed independently)")
+             summary="Upload one or more PDF/DOCX resumes (each file is processed independently)",
+             dependencies=[Depends(limit_expensive)])
 def upload_resumes(
     session_id: str,
     files: list[UploadFile] = File(..., description="PDF or DOCX resumes"),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings_dep),
+    user: User = Depends(get_current_user),
 ) -> UploadResponse:
-    session = _load(db, session_id)
+    session = _load(db, session_id, user)
     if len(files) > settings.max_files_per_request:
         raise AppError(413, "too_many_files",
                        f"Upload at most {settings.max_files_per_request} files per request.")
@@ -168,8 +179,8 @@ def upload_resumes(
                 # Re-read inside the lock so files committed by concurrent requests
                 # take part in duplicate detection.
                 db.expire_all()
-                session = _load(db, session_id)
-                candidate = store_candidate(db, session, name, parsed, settings)
+                session = _load(db, session_id, user)
+                candidate = store_candidate(db, session, name, parsed, settings, actor=user.email)
                 db.commit()
             outcomes.append((candidate.original_filename, candidate.id, None))
         except Exception:  # noqa: BLE001 - isolate failures per file
@@ -180,7 +191,7 @@ def upload_resumes(
         finally:
             upload.file.close()
 
-    session = _load(db, session_id)
+    session = _load(db, session_id, user)
     session.updated_at = datetime.now(UTC)
     db.commit()
     _, summaries = session_views(session)
@@ -194,15 +205,17 @@ def upload_resumes(
 
 
 @router.post("/sessions/{session_id}/evaluate", response_model=EvaluateResponse, status_code=status.HTTP_202_ACCEPTED,
-             summary="Queue evaluation of candidates (processed in the background)")
+             summary="Queue evaluation of candidates (processed in the background)",
+             dependencies=[Depends(limit_expensive)])
 def evaluate_session(
     session_id: str,
     payload: EvaluateRequest | None = None,
     db: Session = Depends(get_db),
     runner: EvaluationRunner = Depends(get_runner),
+    user: User = Depends(get_current_user),
 ) -> EvaluateResponse:
     payload = payload or EvaluateRequest()
-    session = _load(db, session_id)
+    session = _load(db, session_id, user)
 
     def eligible(c) -> bool:
         return (
@@ -228,7 +241,8 @@ def evaluate_session(
     for candidate in targets:
         candidate.evaluation_status = "queued"
     if targets:
-        record_event(db, session.id, "evaluation_queued", f"Queued {len(targets)} candidate(s) for evaluation.")
+        record_event(db, session.id, "evaluation_queued", f"Queued {len(targets)} candidate(s) for evaluation.",
+                     actor=user.email)
     db.commit()
     ids = [c.id for c in targets]
     runner.submit(ids)
@@ -242,8 +256,9 @@ def export_csv(
     session_id: str,
     which: Literal["all", "ranked", "advanced"] = Query("all", alias="filter"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Response:
-    session = _load(db, session_id)
+    session = _load(db, session_id, user)
     _, candidates = session_views(session)
     body = build_csv(session.job_title, candidates, which)  # type: ignore[arg-type]
     slug = re.sub(r"[^a-z0-9]+", "-", session.job_title.lower()).strip("-")[:40] or "screening"
@@ -256,7 +271,8 @@ def export_csv(
 
 
 @router.get("/sessions/{session_id}/events", response_model=list[AuditEventOut], summary="Session activity log")
-def session_events(session_id: str, db: Session = Depends(get_db)) -> list[AuditEventOut]:
-    _load(db, session_id)
+def session_events(session_id: str, db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)) -> list[AuditEventOut]:
+    _load(db, session_id, user)
     return [AuditEventOut.model_validate(e, from_attributes=True) for e in list_events(db, session_id)]
 

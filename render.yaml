@@ -20,12 +20,27 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    # One worker only: the in-process evaluation queue is per-process.
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    # One worker only: the in-process evaluation queue and rate limiter are per-process.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --no-server-header
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.13"
+      # Production mode: API docs off, HSTS on, unsafe settings refused at startup.
+      - key: ENVIRONMENT
+        value: production
+      # Every endpoint except /api/health requires sign-in. The first administrator is
+      # created from these on first start; both are prompted in the dashboard, never committed.
+      # Use a long random password (12+ characters is enforced; the README's public
+      # demo password is refused in production).
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Render's proxy appends the real client IP to X-Forwarded-For; trust exactly that one hop
+      # so per-IP rate limits can't be dodged with a forged header.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
       - key: CORS_ORIGINS
         value: https://talentlens-web-nakulposwal.onrender.com
       - key: AI_PROVIDER

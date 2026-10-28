@@ -37,7 +37,13 @@ def _body(code: str, message: str, details: Any | None = None) -> dict[str, Any]
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.details))
+        headers: dict[str, str] = {}
+        if exc.status_code == 401:
+            headers["WWW-Authenticate"] = "Bearer"
+        if exc.status_code == 429 and isinstance(exc.details, dict) and "retry_after" in exc.details:
+            headers["Retry-After"] = str(exc.details["retry_after"])
+        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.details),
+                            headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
